@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Crypto Wallet</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      color: #888;
+      margin-bottom: 40px;
+      font-size: 16px;
+    }
+
+    .status {
+      background: #f7f7f7;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 30px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .status-item:last-child {
+      border-bottom: none;
+    }
+
+    .status-label {
+      font-weight: 600;
+      color: #333;
+    }
+
+    .status-value {
+      color: #667eea;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+    }
+
+    .button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin: 10px 10px 10px 0;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+    }
+
+    .button:active {
+      transform: translateY(0);
+    }
+
+    .button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .button-secondary {
+      background: white;
+      color: #667eea;
+      border: 2px solid #667eea;
+      box-shadow: none;
+    }
+
+    .section {
+      margin: 30px 0;
+    }
+
+    .section-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 15px;
+    }
+
+    .input-group {
+      margin: 15px 0;
+    }
+
+    .input-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .input-group input,
+    .input-group textarea {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.2s;
+    }
+
+    .input-group input:focus,
+    .input-group textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    #output {
+      background: #f7f7f7;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 15px;
+      min-height: 100px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #333;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .success {
+      color: #28a745;
+      font-weight: 600;
+    }
+
+    .error {
+      color: #dc3545;
+      font-weight: 600;
+    }
+
+    .warning {
+      background: #fff3cd;
+      border: 2px solid #ffc107;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 20px 0;
+      color: #856404;
+    }
+
+    .warning strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Test DApp - Crypto Wallet</h1>
+    <p class="subtitle">Testez votre extension de wallet crypto</p>
+
+    <div class="warning">
+      <strong>⚠️ Avertissement</strong>
+      Ceci est une page de test pour votre wallet crypto. N'envoyez jamais de vraies crypto-monnaies vers des adresses de test.
+    </div>
+
+    <div class="status">
+      <div class="status-item">
+        <span class="status-label">État du wallet:</span>
+        <span class="status-value" id="wallet-status">Non détecté</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Adresse connectée:</span>
+        <span class="status-value" id="connected-address">Aucune</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Chain ID:</span>
+        <span class="status-value" id="chain-id">-</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Connexion</div>
+      <div class="grid">
+        <button class="button" id="connect-btn" onclick="connectWallet()">Connecter le Wallet</button>
+        <button class="button button-secondary" id="disconnect-btn" onclick="disconnect()" disabled>Déconnecter</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Signature de Message</div>
+      <div class="input-group">
+        <label for="message-input">Message à signer:</label>
+        <input type="text" id="message-input" value="Hello Web3!" placeholder="Entrez un message">
+      </div>
+      <button class="button" onclick="signMessage()" id="sign-btn" disabled>Signer le Message</button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Test de Transaction</div>
+      <div class="input-group">
+        <label for="to-address">Adresse destinataire:</label>
+        <input type="text" id="to-address" placeholder="0x..." value="0x0000000000000000000000000000000000000000">
+      </div>
+      <div class="input-group">
+        <label for="amount">Montant (ETH):</label>
+        <input type="text" id="amount" placeholder="0.001" value="0.001">
+      </div>
+      <button class="button" onclick="sendTransaction()" id="send-btn" disabled>Envoyer (Test)</button>
+      <p style="color: #888; font-size: 12px; margin-top: 10px;">
+        Note: Ceci ne fonctionnera que si vous êtes sur un réseau de test avec des fonds de test
+      </p>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Informations du Provider</div>
+      <button class="button button-secondary" onclick="getProviderInfo()">Récupérer les infos</button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Résultat</div>
+      <div id="output">Les résultats s'afficheront ici...</div>
+    </div>
+  </div>
+
+  <script>
+    let currentAccount = null;
+
+    // Vérifier si le wallet est installé
+    window.addEventListener('load', () => {
+      if (typeof window.ethereum !== 'undefined') {
+        log('✅ Wallet détecté!', 'success');
+        document.getElementById('wallet-status').textContent = 'Détecté';
+
+        // Écouter les changements de compte
+        window.ethereum.on('accountsChanged', handleAccountsChanged);
+        window.ethereum.on('chainChanged', handleChainChanged);
+      } else {
+        log('❌ Aucun wallet détecté. Installez l\'extension!', 'error');
+        document.getElementById('wallet-status').textContent = 'Non installé';
+      }
+    });
+
+    async function connectWallet() {
+      try {
+        log('🔗 Connexion au wallet...');
+        const accounts = await window.ethereum.request({
+          method: 'eth_requestAccounts'
+        });
+
+        handleAccountsChanged(accounts);
+        log('✅ Connecté avec succès!', 'success');
+
+        // Récupérer le chain ID
+        const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+        document.getElementById('chain-id').textContent = chainId;
+
+      } catch (error) {
+        log(`❌ Erreur: ${error.message}`, 'error');
+      }
+    }
+
+    function disconnect() {
+      currentAccount = null;
+      document.getElementById('connected-address').textContent = 'Aucune';
+      document.getElementById('connect-btn').disabled = false;
+      document.getElementById('disconnect-btn').disabled = true;
+      document.getElementById('sign-btn').disabled = true;
+      document.getElementById('send-btn').disabled = true;
+      log('🔌 Déconnecté');
+    }
+
+    async function signMessage() {
+      if (!currentAccount) {
+        log('❌ Connectez d\'abord votre wallet', 'error');
+        return;
+      }
+
+      try {
+        const message = document.getElementById('message-input').value;
+        log(`📝 Signature du message: "${message}"`);
+
+        const signature = await window.ethereum.request({
+          method: 'personal_sign',
+          params: [message, currentAccount]
+        });
+
+        log(`✅ Signature générée:\n${signature}`, 'success');
+      } catch (error) {
+        log(`❌ Erreur: ${error.message}`, 'error');
+      }
+    }
+
+    async function sendTransaction() {
+      if (!currentAccount) {
+        log('❌ Connectez d\'abord votre wallet', 'error');
+        return;
+      }
+
+      try {
+        const to = document.getElementById('to-address').value;
+        const amount = document.getElementById('amount').value;
+
+        log(`💸 Envoi de ${amount} ETH vers ${to}...`);
+
+        const transactionParameters = {
+          from: currentAccount,
+          to: to,
+          value: '0x' + (parseFloat(amount) * 1e18).toString(16),
+        };
+
+        const txHash = await window.ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [transactionParameters],
+        });
+
+        log(`✅ Transaction envoyée!\nHash: ${txHash}`, 'success');
+      } catch (error) {
+        log(`❌ Erreur: ${error.message}`, 'error');
+      }
+    }
+
+    async function getProviderInfo() {
+      try {
+        log('📊 Informations du provider:');
+
+        const info = {
+          'isMetaMask': window.ethereum.isMetaMask,
+          'isCryptoWallet': window.ethereum.isCryptoWallet,
+          'chainId': await window.ethereum.request({ method: 'eth_chainId' }),
+          'networkVersion': window.ethereum.networkVersion,
+        };
+
+        if (currentAccount) {
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+          info['accounts'] = accounts;
+        }
+
+        log(JSON.stringify(info, null, 2));
+      } catch (error) {
+        log(`❌ Erreur: ${error.message}`, 'error');
+      }
+    }
+
+    function handleAccountsChanged(accounts) {
+      if (accounts.length === 0) {
+        disconnect();
+      } else if (accounts[0] !== currentAccount) {
+        currentAccount = accounts[0];
+        const shortAddress = `${currentAccount.slice(0, 6)}...${currentAccount.slice(-4)}`;
+        document.getElementById('connected-address').textContent = shortAddress;
+        document.getElementById('connect-btn').disabled = true;
+        document.getElementById('disconnect-btn').disabled = false;
+        document.getElementById('sign-btn').disabled = false;
+        document.getElementById('send-btn').disabled = false;
+        log(`🔄 Compte changé: ${currentAccount}`);
+      }
+    }
+
+    function handleChainChanged(chainId) {
+      document.getElementById('chain-id').textContent = chainId;
+      log(`🔄 Réseau changé: ${chainId}`);
+    }
+
+    function log(message, type = '') {
+      const output = document.getElementById('output');
+      const timestamp = new Date().toLocaleTimeString();
+      const className = type ? `class="${type}"` : '';
+      output.innerHTML = `<span ${className}>[${timestamp}] ${message}</span>\n${output.innerHTML}`;
+    }
+  </script>
+</body>
+</html>

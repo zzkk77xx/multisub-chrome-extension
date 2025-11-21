@@ -68,13 +68,14 @@ export class Wallet {
       throw new Error('Failed to derive private key');
     }
 
-    const wallet = new ethers.Wallet(derived.privateKey);
+    const privateKeyHex = ethers.hexlify(derived.privateKey);
+    const wallet = new ethers.Wallet(privateKeyHex);
 
     return {
       address: wallet.address,
       derivationPath: path,
       index,
-      publicKey: wallet.publicKey
+      publicKey: wallet.signingKey.publicKey
     };
   }
 

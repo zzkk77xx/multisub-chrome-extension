@@ -5,7 +5,7 @@
 
 interface RequestArguments {
   method: string;
-  params?: unknown[] | object;
+  params?: any[];
 }
 
 interface ProviderRpcError extends Error {
@@ -125,18 +125,18 @@ class EthereumProvider {
       case 'eth_signTypedData_v3':
       case 'eth_signTypedData_v4':
         return this.sendMessage('SIGN_MESSAGE', {
-          message: params?.[1] || params?.[0],
+          message: (params && params[1]) || (params && params[0]),
           typed: true
         });
 
       case 'personal_sign':
         return this.sendMessage('SIGN_MESSAGE', {
-          message: params?.[0]
+          message: params && params[0]
         });
 
       case 'eth_sendTransaction':
         return this.sendMessage('SEND_TRANSACTION', {
-          transaction: params?.[0]
+          transaction: params && params[0]
         });
 
       case 'eth_getBalance':
@@ -162,7 +162,7 @@ class EthereumProvider {
 
       case 'wallet_addEthereumChain':
         // Handle adding custom chain
-        return this.sendMessage('ADD_NETWORK', { network: params?.[0] });
+        return this.sendMessage('ADD_NETWORK', { network: params && params[0] });
 
       default:
         throw this.createError(
@@ -188,7 +188,7 @@ class EthereumProvider {
     }
   }
 
-  async sendAsync(request: RequestArguments & { id?: number; jsonrpc?: string }, callback: (error: Error | null, response?: any) => void): void {
+  async sendAsync(request: RequestArguments & { id?: number; jsonrpc?: string }, callback: (error: Error | null, response?: any) => void): Promise<void> {
     try {
       const result = await this.request(request);
       callback(null, {
@@ -239,20 +239,16 @@ class EthereumProvider {
   }
 }
 
-// Inject the provider into window
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider;
-  }
-}
-
 // Only inject if not already present
-if (!window.ethereum) {
+if (!(window as any).ethereum) {
   const provider = new EthereumProvider();
-  window.ethereum = provider;
+  (window as any).ethereum = provider;
 
   // Announce provider to DApps (EIP-6963)
   window.dispatchEvent(new Event('ethereum#initialized'));
 
   console.log('Crypto Wallet provider injected');
 }
+
+// Export to make this a module
+export {};
