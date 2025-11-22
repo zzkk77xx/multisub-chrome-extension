@@ -388,11 +388,55 @@ async function getBalance(address: string) {
 /**
  * Sign a message
  */
-async function signMessage(payload: { message: string; path: string }) {
+async function signMessage(payload: { message: string; path: string; typed?: boolean }) {
   if (!walletInstance) {
     throw new Error('Wallet is locked');
   }
 
+  // Handle EIP-712 typed data signatures (e.g., Permit)
+  if (payload.typed) {
+    try {
+      console.log('[EIP-712] Signing typed data, raw message:', payload.message);
+
+      const typedData = typeof payload.message === 'string'
+        ? JSON.parse(payload.message)
+        : payload.message;
+
+      console.log('[EIP-712] Parsed typed data:', JSON.stringify(typedData, null, 2));
+
+      // EIP-712 typed data format
+      // Handle both formats: {domain, types, message} and {domain, types, primaryType, message}
+      const { domain, types, message, primaryType } = typedData;
+
+      if (!domain || !types || !message) {
+        throw new Error('Invalid EIP-712 typed data format');
+      }
+
+      // Remove EIP712Domain from types as it's implicit
+      const filteredTypes = { ...types };
+      delete filteredTypes.EIP712Domain;
+
+      console.log('[EIP-712] Signing with domain:', domain);
+      console.log('[EIP-712] Types:', Object.keys(filteredTypes));
+      console.log('[EIP-712] Primary type:', primaryType);
+      console.log('[EIP-712] Message:', message);
+
+      const signature = await walletInstance.signTypedData(
+        domain,
+        filteredTypes,
+        message,
+        payload.path
+      );
+
+      console.log('[EIP-712] Signature created:', signature);
+      return { signature };
+    } catch (error) {
+      console.error('[EIP-712] Failed to sign typed data:', error);
+      throw new Error('Failed to sign typed data: ' + (error as Error).message);
+    }
+  }
+
+  // Handle regular message signatures
   const signature = await walletInstance.signMessage(payload.message, payload.path);
   return { signature };
 }

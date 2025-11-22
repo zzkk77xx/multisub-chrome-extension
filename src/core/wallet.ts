@@ -105,6 +105,20 @@ export class Wallet {
   }
 
   /**
+   * Sign EIP-712 typed data with a specific account
+   */
+  async signTypedData(
+    domain: ethers.TypedDataDomain,
+    types: Record<string, ethers.TypedDataField[]>,
+    value: Record<string, any>,
+    path: string
+  ): Promise<string> {
+    const privateKey = this.getPrivateKey(path);
+    const wallet = new ethers.Wallet(privateKey);
+    return wallet.signTypedData(domain, types, value);
+  }
+
+  /**
    * Sign a transaction with a specific account
    */
   async signTransaction(

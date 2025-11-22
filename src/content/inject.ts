@@ -183,8 +183,14 @@ class EthereumProvider {
       case 'eth_signTypedData':
       case 'eth_signTypedData_v3':
       case 'eth_signTypedData_v4':
+        // EIP-712 typed data: params[0] = address, params[1] = typed data JSON
+        const typedDataParam = params && params[1];
+        if (!typedDataParam) {
+          throw this.createError(4001, 'Missing typed data parameter');
+        }
+        console.log('[Provider] eth_signTypedData_v4 called with:', typedDataParam);
         return this.sendMessage('SIGN_MESSAGE', {
-          message: (params && params[1]) || (params && params[0]),
+          message: typedDataParam,
           typed: true
         });
 
