@@ -1,8 +1,8 @@
 import { Wallet } from '../core/wallet';
 import { StorageService } from '../services/storage';
 import { ethers } from 'ethers';
-import { wrapTransferThroughModule } from '../services/defiInteractor';
-import { BaseSigner, SignerType, LedgerDeviceManager } from '../signers';
+import { wrapTransactionThroughModule } from '../services/defiInteractor';
+import { BaseSigner, SignerType, LedgerDeviceManager, SoftwareSigner } from '../signers';
 
 // In-memory wallet instance (cleared when locked)
 let walletInstance: Wallet | null = null;
@@ -67,9 +67,27 @@ async function ensureWalletInstance(): Promise<void> {
     return;
   }
 
-  // Try to restore wallet from session storage
+  // Check wallet type
+  const storedWallet = await StorageService.getWallet();
+  if (!storedWallet) {
+    return; // No wallet exists yet
+  }
+
+  // For private key wallets, we don't need a Wallet instance
+  if (storedWallet.encryptedPrivateKey) {
+    console.log('Private key wallet detected, no Wallet instance needed');
+    return;
+  }
+
+  // Try to restore wallet from session storage (for mnemonic wallets)
   const mnemonic = await StorageService.getSessionMnemonic();
   if (mnemonic) {
+    // Check if it's actually a mnemonic (not a private key stored in same field)
+    if (mnemonic.startsWith('0x')) {
+      console.log('Private key wallet restored, no Wallet instance needed');
+      return;
+    }
+
     const wallet = new Wallet();
     await wallet.fromMnemonic(mnemonic);
     walletInstance = wallet;
@@ -122,6 +140,9 @@ async function handleMessage(
   switch (type) {
     case 'CREATE_WALLET':
       return await createWallet(payload);
+
+    case 'CREATE_WALLET_FROM_PRIVATE_KEY':
+      return await createWalletFromPrivateKey(payload);
 
     case 'UNLOCK_WALLET':
       return await unlockWallet(payload.password);
@@ -358,6 +379,37 @@ async function createWallet(payload: { password: string; mnemonic?: string }) {
 }
 
 /**
+ * Create a wallet from a private key
+ */
+async function createWalletFromPrivateKey(payload: { password: string; privateKey: string }) {
+  const { password, privateKey } = payload;
+
+  // Validate private key format
+  if (!privateKey.match(/^0x[0-9a-fA-F]{64}$/)) {
+    throw new Error('Invalid private key format. Expected 64 hex characters (optionally prefixed with 0x)');
+  }
+
+  // Create ethers wallet from private key to get address and public key
+  const ethersWallet = new ethers.Wallet(privateKey);
+
+  // Create account object
+  const account = {
+    address: ethersWallet.address,
+    derivationPath: 'imported', // No derivation path for imported private keys
+    index: 0,
+    publicKey: ethersWallet.signingKey.publicKey
+  };
+
+  await StorageService.createWalletFromPrivateKey(privateKey, password, account);
+
+  // Don't create a Wallet instance with mnemonic, we'll handle it differently
+  // The wallet will be initialized on unlock
+  walletInstance = null;
+
+  return { address: account.address };
+}
+
+/**
  * Create a new Ledger wallet
  */
 async function createLedgerWallet(payload: { password: string; accounts: any[] }) {
@@ -376,16 +428,16 @@ async function createLedgerWallet(payload: { password: string; accounts: any[] }
  */
 async function unlockWallet(password: string) {
   const walletType = await StorageService.getWalletType();
+  const storedWallet = await StorageService.getWallet();
+
+  if (!storedWallet) {
+    throw new Error("No wallet found");
+  }
 
   // For Ledger wallets, just verify password (no mnemonic to restore)
   if (walletType === SignerType.LEDGER) {
-    const wallet = await StorageService.getWallet();
-    if (!wallet) {
-      throw new Error("No wallet found");
-    }
-
     const passwordHash = await (await import('../core/crypto')).CryptoService.hash(password);
-    if (passwordHash !== wallet.passwordHash) {
+    if (passwordHash !== storedWallet.passwordHash) {
       throw new Error("Invalid password");
     }
 
@@ -406,7 +458,19 @@ async function unlockWallet(password: string) {
     return { address: currentAccount?.address, walletType: SignerType.LEDGER };
   }
 
-  // For software wallets, restore mnemonic
+  // Check if this is a private key wallet
+  if (storedWallet.encryptedPrivateKey) {
+    // For private key wallets, unlock returns the private key
+    await StorageService.unlockWallet(password);
+
+    // Don't create a Wallet instance for private key wallets
+    walletInstance = null;
+
+    const currentAccount = await StorageService.getCurrentAccount();
+    return { address: currentAccount?.address, walletType: SignerType.SOFTWARE };
+  }
+
+  // For mnemonic-based software wallets, restore mnemonic
   const mnemonic = await StorageService.unlockWallet(password);
 
   const wallet = new Wallet();
@@ -504,10 +568,24 @@ async function signMessage(payload: { message: string; path?: string; typed?: bo
   if (walletType === SignerType.LEDGER) {
     signer = Wallet.createLedgerSigner(path);
   } else {
-    if (!walletInstance) {
-      throw new Error('Wallet is locked');
+    // For software wallets, check if we have a mnemonic or private key
+    if (walletInstance) {
+      // Mnemonic-based wallet
+      signer = walletInstance.createSigner(path, SignerType.SOFTWARE);
+    } else {
+      // Private key wallet - get private key from session storage
+      const privateKeyOrMnemonic = await StorageService.getSessionMnemonic();
+      if (!privateKeyOrMnemonic) {
+        throw new Error('Wallet is locked');
+      }
+
+      // Check if it's a private key (starts with 0x)
+      if (privateKeyOrMnemonic.startsWith('0x')) {
+        signer = new SoftwareSigner(privateKeyOrMnemonic);
+      } else {
+        throw new Error('Wallet state error: no wallet instance but session contains mnemonic');
+      }
     }
-    signer = walletInstance.createSigner(path, SignerType.SOFTWARE);
   }
 
   try {
@@ -540,12 +618,12 @@ async function signMessage(payload: { message: string; path?: string; typed?: bo
       const signature = await signer.signTypedData(domain, filteredTypes, message);
 
       console.log('[EIP-712] Signature created:', signature);
-      return { signature };
+      return signature;
     }
 
     // Handle regular message signatures
     const signature = await signer.signMessage(payload.message);
-    return { signature };
+    return signature;
   } finally {
     signer.clear();
   }
@@ -575,10 +653,24 @@ async function signTransaction(payload: {
   if (walletType === SignerType.LEDGER) {
     signer = Wallet.createLedgerSigner(path);
   } else {
-    if (!walletInstance) {
-      throw new Error('Wallet is locked');
+    // For software wallets, check if we have a mnemonic or private key
+    if (walletInstance) {
+      // Mnemonic-based wallet
+      signer = walletInstance.createSigner(path, SignerType.SOFTWARE);
+    } else {
+      // Private key wallet - get private key from session storage
+      const privateKeyOrMnemonic = await StorageService.getSessionMnemonic();
+      if (!privateKeyOrMnemonic) {
+        throw new Error('Wallet is locked');
+      }
+
+      // Check if it's a private key (starts with 0x)
+      if (privateKeyOrMnemonic.startsWith('0x')) {
+        signer = new SoftwareSigner(privateKeyOrMnemonic);
+      } else {
+        throw new Error('Wallet state error: no wallet instance but session contains mnemonic');
+      }
     }
-    signer = walletInstance.createSigner(path, SignerType.SOFTWARE);
   }
 
   try {
@@ -634,9 +726,10 @@ async function sendTransaction(payload: {
     from: payload.transaction.from || currentAccount.address // Ensure 'from' is set
   };
 
-  // Wrap ERC20 transfers through DeFi Interactor Module if configured
+  // Wrap transactions through DeFi Interactor Module if configured
+  // This handles ERC20 transfers, approvals, and protocol calls (like Aave)
   try {
-    const wrappedTx = await wrapTransferThroughModule(transaction, network.chainId);
+    const wrappedTx = await wrapTransactionThroughModule(transaction, network.chainId);
     // Preserve chainId after wrapping
     transaction = {
       ...wrappedTx,
@@ -644,7 +737,7 @@ async function sendTransaction(payload: {
       from: currentAccount.address
     };
   } catch (error) {
-    console.error('[DeFi Interactor] Failed to wrap transfer, using original transaction:', error);
+    console.error('[DeFi Interactor] Failed to wrap transaction, using original transaction:', error);
     // Continue with original transaction if wrapping fails
   }
 
@@ -732,10 +825,24 @@ async function sendTransaction(payload: {
   if (walletType === SignerType.LEDGER) {
     signer = Wallet.createLedgerSigner(path);
   } else {
-    if (!walletInstance) {
-      throw new Error('Wallet is locked');
+    // For software wallets, check if we have a mnemonic or private key
+    if (walletInstance) {
+      // Mnemonic-based wallet
+      signer = walletInstance.createSigner(path, SignerType.SOFTWARE);
+    } else {
+      // Private key wallet - get private key from session storage
+      const privateKeyOrMnemonic = await StorageService.getSessionMnemonic();
+      if (!privateKeyOrMnemonic) {
+        throw new Error('Wallet is locked');
+      }
+
+      // Check if it's a private key (starts with 0x)
+      if (privateKeyOrMnemonic.startsWith('0x')) {
+        signer = new SoftwareSigner(privateKeyOrMnemonic);
+      } else {
+        throw new Error('Wallet state error: no wallet instance but session contains mnemonic');
+      }
     }
-    signer = walletInstance.createSigner(path, SignerType.SOFTWARE);
   }
 
   try {

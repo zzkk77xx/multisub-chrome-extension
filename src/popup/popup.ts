@@ -64,6 +64,24 @@ function setupEventListeners() {
   });
 
   // Import wallet
+  document.getElementById('import-method-mnemonic')?.addEventListener('click', () => {
+    document.getElementById('import-mnemonic-form')!.style.display = 'block';
+    document.getElementById('import-privatekey-form')!.style.display = 'none';
+    document.getElementById('import-method-mnemonic')!.style.background = '#667eea';
+    document.getElementById('import-method-mnemonic')!.style.color = 'white';
+    document.getElementById('import-method-privatekey')!.style.background = '';
+    document.getElementById('import-method-privatekey')!.style.color = '';
+  });
+
+  document.getElementById('import-method-privatekey')?.addEventListener('click', () => {
+    document.getElementById('import-mnemonic-form')!.style.display = 'none';
+    document.getElementById('import-privatekey-form')!.style.display = 'block';
+    document.getElementById('import-method-privatekey')!.style.background = '#667eea';
+    document.getElementById('import-method-privatekey')!.style.color = 'white';
+    document.getElementById('import-method-mnemonic')!.style.background = '';
+    document.getElementById('import-method-mnemonic')!.style.color = '';
+  });
+
   document.getElementById('import-submit-btn')?.addEventListener('click', handleImportWallet);
   document.getElementById('import-back-btn')?.addEventListener('click', () => {
     showScreen('welcome-screen');
@@ -279,15 +297,12 @@ async function handleCreateWallet() {
  * Handle import wallet
  */
 async function handleImportWallet() {
-  const mnemonic = (document.getElementById('import-mnemonic') as HTMLTextAreaElement).value.trim();
   const password = (document.getElementById('import-password') as HTMLInputElement).value;
   const confirmPassword = (document.getElementById('import-password-confirm') as HTMLInputElement).value;
   const errorEl = document.getElementById('import-error');
 
-  if (!mnemonic) {
-    showElementError(errorEl, 'Please enter your recovery phrase');
-    return;
-  }
+  // Check which import method is active
+  const mnemonicFormVisible = (document.getElementById('import-mnemonic-form') as HTMLElement).style.display !== 'none';
 
   if (!password || password.length < 8) {
     showElementError(errorEl, 'Password must be at least 8 characters');
@@ -302,10 +317,38 @@ async function handleImportWallet() {
   try {
     hideElementError(errorEl);
 
-    await sendMessage('CREATE_WALLET', {
-      password,
-      mnemonic
-    });
+    if (mnemonicFormVisible) {
+      // Import via mnemonic
+      const mnemonic = (document.getElementById('import-mnemonic') as HTMLTextAreaElement).value.trim();
+
+      if (!mnemonic) {
+        showElementError(errorEl, 'Please enter your recovery phrase');
+        return;
+      }
+
+      await sendMessage('CREATE_WALLET', {
+        password,
+        mnemonic
+      });
+    } else {
+      // Import via private key
+      let privateKey = (document.getElementById('import-privatekey') as HTMLInputElement).value.trim();
+
+      if (!privateKey) {
+        showElementError(errorEl, 'Please enter your private key');
+        return;
+      }
+
+      // Add 0x prefix if not present
+      if (!privateKey.startsWith('0x')) {
+        privateKey = '0x' + privateKey;
+      }
+
+      await sendMessage('CREATE_WALLET_FROM_PRIVATE_KEY', {
+        password,
+        privateKey
+      });
+    }
 
     await loadWalletData();
     showScreen('wallet-screen');

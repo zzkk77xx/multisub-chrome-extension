@@ -3,7 +3,8 @@ import { WalletAccount } from "../core/wallet";
 import { SignerAccount, SignerType } from "../signers";
 
 export interface StoredWallet {
-  encryptedMnemonic?: string; // Optional - not needed for hardware wallets
+  encryptedMnemonic?: string; // Optional - not needed for hardware wallets or private key imports
+  encryptedPrivateKey?: string; // For single private key imports
   accounts: (WalletAccount | SignerAccount)[];
   passwordHash: string;
   createdAt: number;
@@ -41,6 +42,7 @@ export interface DeFiInteractorConfig {
   moduleAddress: string;
   chainId: number;
   enabled: boolean;
+  whitelistedProtocols?: string[]; // Addresses of protocols (like Aave pool) that can be called via executeOnProtocol
 }
 
 export class StorageService {
@@ -133,6 +135,50 @@ export class StorageService {
   }
 
   /**
+   * Initialize wallet from a private key
+   */
+  static async createWalletFromPrivateKey(
+    privateKey: string,
+    password: string,
+    account: WalletAccount
+  ): Promise<void> {
+    const passwordHash = await CryptoService.hash(password);
+    const encryptedPrivateKey = await CryptoService.encrypt(privateKey, password);
+
+    const wallet: StoredWallet = {
+      encryptedPrivateKey,
+      accounts: [account],
+      passwordHash,
+      createdAt: Date.now(),
+      walletType: SignerType.SOFTWARE,
+    };
+
+    await chrome.storage.local.set({ [this.WALLET_KEY]: wallet });
+
+    // Store private key in session storage so wallet survives service worker restarts
+    const sessionPassword = CryptoService.generateSessionPassword();
+    const sessionEncryptedPrivateKey = await CryptoService.encrypt(
+      privateKey,
+      sessionPassword
+    );
+
+    await chrome.storage.session.set({
+      [this.SESSION_PASSWORD_KEY]: sessionPassword,
+      [this.SESSION_MNEMONIC_KEY]: sessionEncryptedPrivateKey, // Reuse the same key for consistency
+    });
+
+    // Initialize default state
+    await this.setState({
+      isLocked: false,
+      currentAccount: 0,
+      currentNetwork: 0,
+    });
+
+    // Initialize default networks
+    await this.initializeDefaultNetworks();
+  }
+
+  /**
    * Get stored wallet
    */
   static async getWallet(): Promise<StoredWallet | null> {
@@ -150,6 +196,7 @@ export class StorageService {
 
   /**
    * Unlock wallet with password
+   * Returns mnemonic or private key depending on wallet type
    */
   static async unlockWallet(password: string): Promise<string> {
     const wallet = await this.getWallet();
@@ -162,6 +209,40 @@ export class StorageService {
       throw new Error("Invalid password");
     }
 
+    // Check if this is a private key wallet
+    if (wallet.encryptedPrivateKey) {
+      try {
+        const privateKey = await CryptoService.decrypt(
+          wallet.encryptedPrivateKey,
+          password
+        );
+
+        // Store session password and encrypted private key in session storage
+        const sessionPassword = CryptoService.generateSessionPassword();
+        const sessionEncryptedPrivateKey = await CryptoService.encrypt(
+          privateKey,
+          sessionPassword
+        );
+
+        await chrome.storage.session.set({
+          [this.SESSION_PASSWORD_KEY]: sessionPassword,
+          [this.SESSION_MNEMONIC_KEY]: sessionEncryptedPrivateKey, // Reuse the same key
+        });
+
+        const state = await this.getState();
+        await this.setState({
+          isLocked: false,
+          currentAccount: state?.currentAccount ?? 0,
+          currentNetwork: state?.currentNetwork ?? 0,
+        });
+
+        return privateKey;
+      } catch (error) {
+        throw new Error("Failed to decrypt private key");
+      }
+    }
+
+    // Otherwise, this is a mnemonic wallet
     if (!wallet.encryptedMnemonic) {
       throw new Error("No mnemonic found in wallet (this might be a hardware wallet)");
     }
