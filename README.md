@@ -1,224 +1,395 @@
-# Crypto Wallet Extension
+# MultiSub Extension
 
-A secure, multi-chain cryptocurrency wallet Chrome extension built with TypeScript and modern web technologies.
+> A Chrome extension wallet that enables **permission-restricted DeFi interactions** by disguising as a Safe multisig and relaying transactions through the DeFiInteractorModule.
 
-## Features
+Part of the MultiSub ecosystem.
 
-- **BIP39 Mnemonic Generation**: Generate secure 12-word recovery phrases
-- **BIP44 HD Wallet**: Hierarchical Deterministic wallet with multiple account support
-- **Multi-Chain Support**: Ethereum, Polygon, BNB Chain, Arbitrum, and custom networks
-- **EIP-1193 Provider**: Full Web3 provider injection for DApp compatibility
-- **Secure Storage**: AES-GCM encryption with PBKDF2 key derivation
-- **Chrome Extension Manifest V3**: Built with the latest Chrome extension standards
+## Overview
 
-## Security Features
+MultiSub solves a critical UX problem: **How to use a hot wallet with DApps while maintaining Safe multisig security controls**.
 
-- Password-protected wallet with PBKDF2 (100,000 iterations)
-- AES-GCM encryption for sensitive data
-- Encrypted mnemonic storage
-- Session-based unlocking
-- Never exposes private keys to web pages
+**The Innovation**:
 
-## Standards Compliance
+- DApps think they're interacting with a Safe multisig (via EIP-1271 signature verification)
+- Transactions are actually relayed through the **DeFiInteractorModule** (custom Zodiac module)
+- The module enforces role-based permissions, allowlists, and time-windowed limits
+- Your Safe multisig retains full control and can revoke permissions instantly
 
-- **BIP39**: Mnemonic code for generating deterministic keys
-- **BIP44**: Multi-account hierarchy for deterministic wallets
-  - Default path: `m/44'/60'/0'/0/{index}` for Ethereum
-  - Customizable coin types for other chains
-- **EIP-1193**: Ethereum Provider JavaScript API
-- **Chrome Manifest V3**: Latest extension platform
+### Why We Built This From Scratch
+
+**We had no other choice** than building our own wallet extension due to fundamental architectural constraints:
+
+1. **Existing wallets can't masquerade as Safe**:
+
+   - MetaMask, Rainbow, etc. inject the EOA address into `window.ethereum`
+   - We need DApps to see the **Safe address**, not the EOA
+   - No extension wallet supports this mode of operation
+
+2. **Transaction routing is hardcoded**:
+
+   - Standard wallets send transactions directly to the target (e.g., Aave)
+   - We need to **intercept and reroute** through DeFiInteractorModule
+   - The module address is the actual `tx.to`, with the original target embedded in calldata
+
+3. **EIP-1193 provider must lie (intentionally)**:
+
+   - `eth_accounts` must return `[safeAddress]` instead of `[eoaAddress]`
+   - `eth_sendTransaction` must rewrite the transaction before signing
+   - Standard wallet APIs don't allow this level of control
+
+4. **No existing solution for delegated Safe operations**:
+   - Safe's built-in delegation requires multisig confirmation
+   - We need **single-signature execution** via the module
+   - The module handles Safe.exec() internally
+
+**Result**: A custom Chrome extension that speaks standard EIP-1193 to DApps but implements non-standard routing logic internally.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│     DApp (Uniswap, Aave, etc.)          │
+│                                         │
+│  Sees: Safe multisig address            │
+│  Gets: EIP-1271 signature verification  │
+└──────────────┬──────────────────────────┘
+               │
+               ↓
+┌─────────────────────────────────────────┐
+│    MultiSub Extension (This Wallet)     │
+│                                         │
+│  • Masquerades as Safe                  │
+│  • Provides EIP-1193 provider           │
+│  • Routes txs → DeFiInteractorModule    │
+│  • Hot wallet UX, cold storage security │
+└──────────────┬──────────────────────────┘
+               │
+               ↓
+┌─────────────────────────────────────────┐
+│     DeFiInteractorModule (Zodiac)       │
+│                                         │
+│  • Validates sub-account permissions    │
+│  • Checks protocol allowlist            │
+│  • Enforces time-windowed limits        │
+│  • Executes via Safe.exec()             │
+└──────────────┬──────────────────────────┘
+               │
+               ↓
+┌─────────────────────────────────────────┐
+│          Safe Multisig                  │
+│                                         │
+│  • Actual custody of funds              │
+│  • Configures module permissions        │
+│  • Emergency controls                   │
+└─────────────────────────────────────────┘
+```
+
+## Core Functionalities
+
+### 1. Safe Multisig Impersonation
+
+The extension presents the **Safe address** to DApps instead of the EOA address:
+
+- `window.ethereum.request({ method: 'eth_accounts' })` returns `[safeAddress]`
+- DApps interact with the Safe address as if it were a standard EOA
+- All signature requests are handled via **EIP-1271** contract signature verification
+- The Safe appears as a standard wallet to DApps
+
+**Why this matters**: DApps only see and interact with your Safe. Your hot wallet (EOA) remains invisible.
+
+### 2. Transaction Relay Through DeFiInteractorModule
+
+Every transaction is routed through the custom Zodiac module:
+
+```typescript
+// Instead of: Safe.executeTransaction(target, value, data)
+// Extension calls: DeFiInteractorModule.executeOnProtocol(target, data)
+```
+
+The module enforces:
+
+- **Role verification**: Does this sub-account have DEFI_EXECUTE_ROLE?
+- **Allowlist check**: Is the target protocol allowed for this sub-account?
+- **Limit validation**: Does this stay within time-windowed deposit/withdraw limits?
+- **Safe execution**: Passes through to Safe.exec() only if all checks pass
+
+**Why this matters**: You get hot wallet convenience with multisig-level security controls.
+
+### 3. Permission-Restricted Operations
+
+The extension exposes three core operations mapped to module functions:
+
+| Operation         | Module Function       | Required Role      | Enforced Limits                              |
+| ----------------- | --------------------- | ------------------ | -------------------------------------------- |
+| Approve tokens    | `approveProtocol()`   | DEFI_EXECUTE_ROLE  | Protocol allowlist                           |
+| DeFi interactions | `executeOnProtocol()` | DEFI_EXECUTE_ROLE  | Protocol allowlist + deposit/withdraw limits |
+| Token transfers   | `transferToken()`     | DEFI_TRANSFER_ROLE | Transfer limits + time windows               |
+
+**Why this matters**: The Safe owners (cold wallet) grant granular permissions. Sub-accounts can only do what they're explicitly allowed to do.
 
 ## Installation
 
-### Development
+### Prerequisites
 
-1. Install dependencies:
+1. **Deploy MultiSub infrastructure**:
+
+   - Deploy a Safe multisig
+   - Deploy DeFiInteractorModule and enable it on the Safe
+   - See [MultiSub documentation](https://github.com/plouis01/multisub)
+
+2. **Configure sub-account**:
+
+   ```bash
+   # Grant DEFI_EXECUTE_ROLE (1) to your hot wallet
+   cast send $MODULE "grantRole(address,uint16)" $EOA_ADDRESS 1
+
+   # Set allowed protocols (e.g., Aave, Morpho, Uniswap)
+   cast send $MODULE "setAllowedAddresses(address,address[],bool)" \
+     $EOA_ADDRESS "[$AAVE_POOL,$MORPHO_VAULT]" true
+
+   # Set limits (e.g., 10% deposit, 5% withdraw, 48h window)
+   cast send $MODULE "setSubAccountLimits(address,uint256,uint256,uint256,uint256)" \
+     $EOA_ADDRESS 1000 500 300 172800
+   ```
+
+### Build Extension
+
 ```bash
+# Install dependencies
 npm install
-```
 
-2. Build the extension:
-```bash
+# Build for production
 npm run build
-```
 
-3. Load in Chrome:
-   - Open `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked"
-   - Select the `dist` folder
-
-### Development Mode (with hot reload)
-
-```bash
+# Or run in dev mode with hot reload
 npm run dev
 ```
 
-This will watch for file changes and rebuild automatically.
+### Load in Chrome
+
+1. Open `chrome://extensions/`
+2. Enable "Developer mode"
+3. Click "Load unpacked"
+4. Select the `dist` folder
 
 ## Project Structure
 
 ```
-crypto-wallet-extension/
+multisub-extension/
 ├── src/
 │   ├── core/
-│   │   ├── wallet.ts          # BIP39/BIP44 wallet implementation
-│   │   └── crypto.ts          # Encryption utilities
+│   │   ├── wallet.ts          # BIP39/BIP44 wallet (EOA generation)
+│   │   └── crypto.ts          # AES-GCM encryption
 │   ├── services/
-│   │   └── storage.ts         # Chrome storage service
+│   │   ├── storage.ts         # Chrome storage
+│   │   └── defi-module.ts     # DeFiInteractorModule interface
 │   ├── background/
-│   │   └── background.ts      # Service worker
+│   │   └── background.ts      # Routes txs to module
 │   ├── content/
-│   │   ├── content.ts         # Content script
-│   │   └── inject.ts          # EIP-1193 provider
+│   │   ├── content.ts         # Bridge to inject.ts
+│   │   └── inject.ts          # EIP-1193 provider (masquerades as Safe)
 │   └── popup/
-│       ├── popup.html         # Popup UI
-│       └── popup.ts           # Popup logic
+│       ├── popup.html         # Wallet UI
+│       └── popup.ts           # Configure Safe/Module addresses
 ├── public/
-│   └── manifest.json          # Extension manifest
-└── webpack.config.js          # Build configuration
+│   └── manifest.json          # Chrome Manifest V3
+└── test-dapp.html             # Local DApp for testing
 ```
 
-## Usage
+## Configuration
 
-### Creating a Wallet
+### First Time Setup
 
-1. Click the extension icon
-2. Click "Create New Wallet"
-3. Enter a strong password
-4. Save your 12-word recovery phrase securely
-5. Your wallet is ready!
+1. **Create or import EOA**:
 
-### Importing a Wallet
+   - Click extension icon
+   - Create new wallet or import existing mnemonic
+   - This becomes your sub-account (hot wallet)
 
-1. Click "Import Existing Wallet"
-2. Enter your 12 or 24-word recovery phrase
-3. Create a password
-4. Your wallet is restored
+2. **Configure Safe connection**:
 
-### Resetting the Wallet
+   - Enter your Safe multisig address
+   - Enter deployed DeFiInteractorModule address
+   - Verify your EOA has been granted roles by the Safe
 
-If you need to start fresh or fix issues:
+3. **Test with DApp**:
+   - Open any DApp (Uniswap, Aave, etc.)
+   - Connect wallet - DApp sees your Safe address
+   - Sign transactions - routed through module
 
-1. Open the extension
-2. Go to the "Settings" tab
-3. Scroll to the "Danger Zone"
-4. Click "Reset Wallet"
-5. Confirm twice (this is irreversible!)
-6. Create a new wallet or import an existing one
+### Usage
 
-**⚠️ Important**: Save your recovery phrase before resetting! This action deletes all wallet data permanently.
+The extension handles three transaction types:
 
-See `RESET_WALLET_GUIDE.md` for detailed instructions.
+1. **Token Approvals**:
 
-### Using with DApps
+   - DApp: "Approve USDC for Aave"
+   - Extension: `approveProtocol(USDC, AAVE_POOL, amount)`
+   - Module: Checks allowlist, executes via Safe
 
-The wallet automatically injects a Web3 provider into web pages, making it compatible with:
-- Uniswap
-- OpenSea
-- Aave
-- And any other DApp that supports EIP-1193
+2. **DeFi Operations**:
 
-### Supported Networks
+   - DApp: "Deposit 1000 USDC to Aave"
+   - Extension: `executeOnProtocol(AAVE_POOL, deposit_calldata)`
+   - Module: Checks role + allowlist + limits, executes via Safe
 
-Default networks:
-- Ethereum Mainnet
-- Polygon
-- BNB Smart Chain
-- Arbitrum One
+3. **Token Transfers**:
+   - DApp: "Send 100 USDC to 0x..."
+   - Extension: `transferToken(USDC, recipient, amount)`
+   - Module: Checks DEFI_TRANSFER_ROLE + limits, executes via Safe
 
-You can add custom networks through the wallet interface.
+### Supported DApps
 
-## API Reference
+Any EIP-1193 compatible DApp:
 
-### Background Messages
+- Uniswap (swaps, liquidity)
+- Aave (lending/borrowing)
+- Morpho (optimized yields)
+- Compound, Curve, Balancer, etc.
 
-The extension supports the following message types:
+**Note**: Only protocols added to the module's allowlist will work.
 
-- `CREATE_WALLET`: Create a new wallet
-- `UNLOCK_WALLET`: Unlock with password
-- `LOCK_WALLET`: Lock the wallet
-- `GET_WALLET_STATUS`: Get wallet state
-- `ADD_ACCOUNT`: Derive a new account
-- `GET_ACCOUNTS`: Get all accounts
-- `GET_BALANCE`: Get address balance
-- `SIGN_MESSAGE`: Sign a message
-- `SEND_TRANSACTION`: Sign and broadcast transaction
+## How It Works Under the Hood
 
-### EIP-1193 Provider Methods
+### 1. Provider Injection (`inject.ts`)
 
-The injected `window.ethereum` provider supports:
+```typescript
+// DApps see the Safe address, not the EOA
+window.ethereum.request({ method: "eth_accounts" });
+// Returns: ['0xSafeAddress...'] (not '0xEOAAddress...')
 
-- `eth_requestAccounts`: Request account access
-- `eth_accounts`: Get connected accounts
-- `eth_chainId`: Get current chain ID
-- `personal_sign`: Sign a message
-- `eth_sendTransaction`: Send a transaction
-- `wallet_switchEthereumChain`: Switch networks
-- `wallet_addEthereumChain`: Add custom network
+// When DApp requests a transaction:
+window.ethereum.request({
+  method: "eth_sendTransaction",
+  params: [
+    {
+      from: safeAddress,
+      to: aavePool,
+      data: depositCalldata,
+    },
+  ],
+});
+```
 
-## Security Considerations
+### 2. Transaction Routing (`background.ts`)
 
-### For Users
+```typescript
+// Extension intercepts and routes to module:
+const moduleCalldata = encodeFunctionData({
+  abi: DeFiInteractorModule.abi,
+  functionName: "executeOnProtocol",
+  args: [aavePool, depositCalldata],
+});
 
-- Never share your recovery phrase with anyone
-- Use a strong, unique password
-- Keep your recovery phrase backed up securely
-- This is a demonstration wallet - use at your own risk for production
+// EOA signs transaction to module (not to Aave directly)
+const tx = {
+  from: eoaAddress,
+  to: moduleAddress,
+  data: moduleCalldata,
+};
+```
 
-### For Developers
+### 3. Module Validation (On-chain)
 
-- Private keys never leave the extension context
-- All sensitive data is encrypted at rest
-- Session keys are stored in memory only
-- Web Crypto API used for all cryptographic operations
-- Content Security Policy enforced
+```solidity
+// DeFiInteractorModule.executeOnProtocol()
+require(hasRole(msg.sender, DEFI_EXECUTE_ROLE), "No permission");
+require(allowedAddresses[msg.sender][target], "Protocol not allowed");
+require(checkLimits(msg.sender, amount), "Exceeds limits");
+
+// Execute via Safe
+ISafe(avatar).exec(target, 0, data, Enum.Operation.Call);
+```
+
+### 4. Safe Execution
+
+```solidity
+// Safe.exec() called by module
+// Actual interaction with Aave happens here
+// Funds never leave the Safe
+```
+
+## Security Model
+
+### Trust Assumptions
+
+| Component                | Trust Level         | Why                                           |
+| ------------------------ | ------------------- | --------------------------------------------- |
+| **Safe Multisig**        | Full trust          | You control the keys                          |
+| **DeFiInteractorModule** | Code audit required | Controls your permissions                     |
+| **MultiSub Extension**   | Minimal trust       | Only relays transactions, can't bypass module |
+| **DApps**                | Zero trust          | Can only request, module enforces allowlist   |
+
+### Attack Vectors & Mitigations
+
+1. **Compromised EOA (hot wallet)**:
+
+   - Attacker limited by role permissions
+   - Can't approve/interact with non-allowlisted protocols
+   - Can't exceed time-windowed limits
+   - Safe owners can instantly revoke role
+
+2. **Malicious DApp**:
+
+   - Can only request transactions to allowlisted protocols
+   - Module validates all calls on-chain
+   - Can't drain Safe beyond limits
+
+3. **Phishing/Social Engineering**:
+
+   - User signs malicious approval
+   - Still limited by protocol allowlist
+   - Large transfers blocked by limits
+
+4. **Module Exploit**:
+   - Safe owners can disable module instantly
+   - Emergency pause function available
+   - Regular security audits recommended
 
 ## Development
 
-### Building
+### Testing Locally
 
 ```bash
-npm run build
+# 1. Start local test DApp
+open test-dapp.html
+
+# 2. Build extension in dev mode
+npm run dev
+
+# 3. Load extension and test
+# Should see Safe address in DApp
+# Transactions should route through module
 ```
 
-### Testing
+### Key Files
 
-```bash
-npm test
-```
+- `src/content/inject.ts:45` - Safe address masquerading
+- `src/background/background.ts:120` - Module transaction routing
+- `src/services/defi-module.ts` - Module ABI and interfaces
 
-### Code Structure
+## Limitations
 
-The wallet is built with a clean architecture:
+- Only supports EVM chains (Ethereum, Polygon, Arbitrum, etc.)
+- Requires DeFiInteractorModule deployment
+- Gas fees paid by EOA (not Safe)
+- Single signature transactions (module handles Safe execution)
 
-1. **Core Layer**: Pure wallet logic (BIP39/BIP44)
-2. **Service Layer**: Chrome storage and encryption
-3. **Background Layer**: Message handling and coordination
-4. **UI Layer**: Popup interface
+## Roadmap
 
-## BIP44 Derivation Paths
+- [ ] Hardware wallet support for EOA
+- [ ] Transaction simulation before signing
+- [ ] Multi-Safe management
+- [ ] Mobile app (React Native)
+- [ ] Gasless transactions (relayers)
 
-Default paths for supported chains:
+## Resources
 
-- Ethereum: `m/44'/60'/0'/0/{index}`
-- Polygon: `m/44'/60'/0'/0/{index}` (same as Ethereum)
-- BNB Chain: `m/44'/60'/0'/0/{index}` (EVM compatible)
-- Custom chains: Configurable coin type
-
-## Contributing
-
-This is a demonstration project. For production use, additional features needed:
-
-- Transaction history
-- Token support (ERC-20, ERC-721)
-- Gas estimation
-- Address book
-- Multiple language support
-- Hardware wallet integration
-- Recovery phrase verification
-- Phishing protection
-- Permission management for DApps
+- [MultiSub Smart Contracts](https://github.com/plouis01/multisub)
+- [Safe Documentation](https://docs.safe.global/)
+- [Zodiac Modules](https://www.zodiac.wiki/)
+- [EIP-1193 Spec](https://eips.ethereum.org/EIPS/eip-1193)
+- [EIP-1271 Spec](https://eips.ethereum.org/EIPS/eip-1271)
 
 ## License
 
@@ -226,4 +397,4 @@ MIT
 
 ## Disclaimer
 
-This wallet is provided as-is for educational and development purposes. Use at your own risk. Always verify transactions before signing. Never store large amounts of cryptocurrency in a browser extension wallet.
+This wallet is part of the MultiSub research project. Smart contracts should be audited before production use. Never store more funds than you can afford to lose. This is experimental software.
