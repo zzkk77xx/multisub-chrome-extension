@@ -1,6 +1,7 @@
 import { Wallet } from '../core/wallet';
 import { StorageService } from '../services/storage';
 import { ethers } from 'ethers';
+import { wrapTransferThroughModule } from '../services/defiInteractor';
 
 // In-memory wallet instance (cleared when locked)
 let walletInstance: Wallet | null = null;
@@ -246,6 +247,18 @@ async function handleMessage(
 
     case 'UPDATE_DEFAULT_NETWORKS':
       return await StorageService.updateDefaultNetworks();
+
+    case 'GET_DEFI_INTERACTOR_CONFIGS':
+      return await StorageService.getDeFiInteractorConfigs();
+
+    case 'GET_DEFI_INTERACTOR_CONFIG_FOR_CHAIN':
+      return await StorageService.getDeFiInteractorConfigForChain(payload.chainId);
+
+    case 'SET_DEFI_INTERACTOR_CONFIG':
+      return await StorageService.setDeFiInteractorConfig(payload.config);
+
+    case 'REMOVE_DEFI_INTERACTOR_CONFIG':
+      return await StorageService.removeDeFiInteractorConfig(payload.chainId);
 
     default:
       throw new Error(`Unknown message type: ${type}`);
@@ -496,11 +509,25 @@ async function sendTransaction(payload: {
   }
 
   // Prepare transaction with all required fields
-  const transaction = {
+  let transaction: ethers.TransactionRequest = {
     ...payload.transaction,
     chainId: network.chainId,
     from: payload.transaction.from || currentAccount.address // Ensure 'from' is set
   };
+
+  // Wrap ERC20 transfers through DeFi Interactor Module if configured
+  try {
+    const wrappedTx = await wrapTransferThroughModule(transaction, network.chainId);
+    // Preserve chainId after wrapping
+    transaction = {
+      ...wrappedTx,
+      chainId: network.chainId,
+      from: currentAccount.address
+    };
+  } catch (error) {
+    console.error('[DeFi Interactor] Failed to wrap transfer, using original transaction:', error);
+    // Continue with original transaction if wrapping fails
+  }
 
   const dataSize = transaction.data ? (transaction.data.length - 2) / 2 : 0;
   console.log('[Transaction] Received from dApp:', {

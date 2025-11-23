@@ -590,6 +590,44 @@
           </div>
 
           <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
+            <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 15px;">DeFi Interactor Module</h3>
+
+            <div style="background: #e7f3ff; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+              <strong style="color: #0d47a1; display: block; margin-bottom: 5px;">Token Transfer Security</strong>
+              <span style="color: #0d47a1; font-size: 13px;">Route token transfers through your Safe's DeFi Interactor Module for role-based access control and transfer limits</span>
+            </div>
+
+            <div id="defi-config-list" style="margin-bottom: 15px;"></div>
+
+            <div style="background: #f7f7f7; border: 2px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+              <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 12px;">Add Module Configuration</h4>
+
+              <div style="background: #e7f3ff; border: 1px solid #2196F3; border-radius: 6px; padding: 10px; margin-bottom: 12px;">
+                <div style="font-size: 12px; color: #0d47a1;">
+                  <strong>Current Network:</strong> <span id="defi-current-network">-</span>
+                </div>
+                <div style="font-size: 12px; color: #0d47a1; margin-top: 4px;">
+                  <strong>Chain ID:</strong> <span id="defi-current-chain-id">-</span>
+                </div>
+              </div>
+
+              <div class="input-group">
+                <label for="defi-module-address">Module Contract Address</label>
+                <input type="text" id="defi-module-address" placeholder="0x...">
+              </div>
+
+              <div style="margin-bottom: 15px;">
+                <label style="display: flex; align-items: center; font-size: 14px; cursor: pointer;">
+                  <input type="checkbox" id="defi-enabled-checkbox" style="margin-right: 8px;" checked>
+                  <span style="font-weight: 600;">Enable for this network</span>
+                </label>
+              </div>
+
+              <button class="button" id="save-defi-config-btn">Add/Update Configuration</button>
+            </div>
+          </div>
+
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #e0e0e0;">
             <div style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
               <strong style="color: #856404; display: block; margin-bottom: 5px;">⚠️ Danger Zone</strong>
               <span style="color: #856404; font-size: 13px;">Cette action supprimera toutes les données du wallet. Assurez-vous d'avoir sauvegardé votre phrase de récupération !</span>

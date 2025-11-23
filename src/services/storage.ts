@@ -35,6 +35,12 @@ export interface AddressSpoofConfig {
   spoofedAddress: string;
 }
 
+export interface DeFiInteractorConfig {
+  moduleAddress: string;
+  chainId: number;
+  enabled: boolean;
+}
+
 export class StorageService {
   private static readonly WALLET_KEY = "wallet";
   private static readonly NETWORKS_KEY = "networks";
@@ -43,6 +49,7 @@ export class StorageService {
   private static readonly SESSION_PASSWORD_KEY = "sessionPassword";
   private static readonly SESSION_MNEMONIC_KEY = "sessionMnemonic";
   private static readonly ADDRESS_SPOOF_KEY = "addressSpoof";
+  private static readonly DEFI_INTERACTOR_KEY = "defiInteractor";
 
   /**
    * Initialize wallet with mnemonic and password
@@ -582,5 +589,50 @@ export class StorageService {
     config: AddressSpoofConfig
   ): Promise<void> {
     await chrome.storage.local.set({ [this.ADDRESS_SPOOF_KEY]: config });
+  }
+
+  /**
+   * Get DeFi Interactor Module configurations (per chain)
+   */
+  static async getDeFiInteractorConfigs(): Promise<DeFiInteractorConfig[]> {
+    const result = await chrome.storage.local.get(this.DEFI_INTERACTOR_KEY);
+    return result[this.DEFI_INTERACTOR_KEY] || [];
+  }
+
+  /**
+   * Get DeFi Interactor Module configuration for a specific chain
+   */
+  static async getDeFiInteractorConfigForChain(
+    chainId: number
+  ): Promise<DeFiInteractorConfig | null> {
+    const configs = await this.getDeFiInteractorConfigs();
+    return configs.find((c) => c.chainId === chainId) || null;
+  }
+
+  /**
+   * Add or update DeFi Interactor Module configuration for a chain
+   */
+  static async setDeFiInteractorConfig(
+    config: DeFiInteractorConfig
+  ): Promise<void> {
+    const configs = await this.getDeFiInteractorConfigs();
+    const existingIndex = configs.findIndex((c) => c.chainId === config.chainId);
+
+    if (existingIndex !== -1) {
+      configs[existingIndex] = config;
+    } else {
+      configs.push(config);
+    }
+
+    await chrome.storage.local.set({ [this.DEFI_INTERACTOR_KEY]: configs });
+  }
+
+  /**
+   * Remove DeFi Interactor Module configuration for a chain
+   */
+  static async removeDeFiInteractorConfig(chainId: number): Promise<void> {
+    const configs = await this.getDeFiInteractorConfigs();
+    const filtered = configs.filter((c) => c.chainId !== chainId);
+    await chrome.storage.local.set({ [this.DEFI_INTERACTOR_KEY]: filtered });
   }
 }

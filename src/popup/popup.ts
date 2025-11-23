@@ -148,6 +148,9 @@ function setupEventListeners() {
   // Address spoofing controls
   document.getElementById('spoof-enabled-checkbox')?.addEventListener('change', handleSpoofEnabledChange);
   document.getElementById('save-spoof-btn')?.addEventListener('click', handleSaveSpoofConfig);
+
+  // DeFi Interactor Module controls
+  document.getElementById('save-defi-config-btn')?.addEventListener('click', handleSaveDeFiConfig);
 }
 
 /**
@@ -210,9 +213,10 @@ async function switchTab(tabName: string) {
     await loadTokens();
   }
 
-  // Load spoof config when switching to settings tab
+  // Load spoof config and DeFi configs when switching to settings tab
   if (tabName === 'settings') {
     await loadSpoofConfig();
+    await loadDeFiConfigs();
   }
 }
 
@@ -314,9 +318,17 @@ async function handleUnlock() {
   try {
     hideElementError(errorEl);
 
+    // Unlock wallet first
     await sendMessage('UNLOCK_WALLET', { password });
-    await loadWalletData();
+
+    // Show wallet screen immediately after unlock succeeds
     showScreen('wallet-screen');
+
+    // Load wallet data in background - don't let RPC failures block unlock
+    loadWalletData().catch(error => {
+      console.error('Failed to load wallet data after unlock:', error);
+      // Wallet is still unlocked, just show default values
+    });
   } catch (error) {
     showElementError(errorEl, 'Invalid password');
   }
@@ -357,17 +369,10 @@ async function handleResetWallet() {
  */
 async function loadWalletData() {
   try {
-    const [account, network, balance] = await Promise.all([
+    // Fetch account and network info (fast, no RPC needed)
+    const [account, network] = await Promise.all([
       sendMessage<any>('GET_CURRENT_ACCOUNT'),
-      sendMessage<any>('GET_CURRENT_NETWORK'),
-      sendMessage<any>('GET_CURRENT_ACCOUNT').then(async (acc) => {
-        if (acc?.address) {
-          return sendMessage<{ balance: string; formatted: string }>('GET_BALANCE', {
-            address: acc.address
-          });
-        }
-        return { balance: '0', formatted: '0.00' };
-      })
+      sendMessage<any>('GET_CURRENT_NETWORK')
     ]);
 
     // Update account display
@@ -377,21 +382,20 @@ async function loadWalletData() {
       addressEl.textContent = shortAddress;
     }
 
-    // Update balance
-    const balanceEl = document.getElementById('balance-amount');
-    const symbolEl = document.getElementById('balance-symbol');
-    if (balanceEl && balance) {
-      balanceEl.textContent = parseFloat(balance.formatted).toFixed(4);
-    }
-
-    // Update network
+    // Update network display
     const networkEl = document.getElementById('network-name');
+    const symbolEl = document.getElementById('balance-symbol');
     if (networkEl && network) {
       networkEl.textContent = network.name;
     }
-
     if (symbolEl && network) {
       symbolEl.textContent = network.symbol;
+    }
+
+    // Balance removed - no RPC calls needed
+    const balanceEl = document.getElementById('balance-amount');
+    if (balanceEl) {
+      balanceEl.textContent = '-';
     }
   } catch (error) {
     console.error('Failed to load wallet data:', error);
@@ -570,11 +574,6 @@ async function handleSendTransaction() {
     (document.getElementById('send-to') as HTMLInputElement).value = '';
     (document.getElementById('send-amount') as HTMLInputElement).value = '';
     (document.getElementById('send-gas') as HTMLInputElement).value = '';
-
-    // Refresh balance after a delay
-    setTimeout(async () => {
-      await loadWalletData();
-    }, 2000);
 
   } catch (error) {
     showElementError(errorEl, (error as Error).message);
@@ -1087,6 +1086,133 @@ async function handleSaveSpoofConfig() {
     alert('Failed to save: ' + (error as Error).message);
   }
 }
+
+/**
+ * Load DeFi Interactor configurations
+ */
+async function loadDeFiConfigs() {
+  try {
+    // Update current network info
+    const currentNetwork = await sendMessage<any>('GET_CURRENT_NETWORK');
+    const networkNameEl = document.getElementById('defi-current-network');
+    const chainIdEl = document.getElementById('defi-current-chain-id');
+
+    if (networkNameEl && currentNetwork) {
+      networkNameEl.textContent = currentNetwork.name;
+    }
+    if (chainIdEl && currentNetwork) {
+      chainIdEl.textContent = currentNetwork.chainId.toString();
+    }
+
+    const configs = await sendMessage<Array<{ moduleAddress: string; chainId: number; enabled: boolean }>>('GET_DEFI_INTERACTOR_CONFIGS');
+    const configList = document.getElementById('defi-config-list');
+
+    if (!configList) return;
+
+    if (!configs || configs.length === 0) {
+      configList.innerHTML = '<div style="text-align: center; padding: 15px; color: #888; font-size: 13px;">No configurations yet. Add one below.</div>';
+      return;
+    }
+
+    const configElements = configs.map(config => {
+      const shortAddress = `${config.moduleAddress.slice(0, 6)}...${config.moduleAddress.slice(-4)}`;
+      const statusColor = config.enabled ? '#28a745' : '#888';
+      const statusText = config.enabled ? 'ENABLED' : 'DISABLED';
+
+      return `
+        <div style="background: #f7f7f7; border: 2px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="flex: 1;">
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: 3px;">Chain ID: ${config.chainId}</div>
+              <div style="font-size: 11px; color: #888; font-family: 'Courier New', monospace;">${shortAddress}</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="background: ${statusColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;">${statusText}</div>
+              <button onclick="handleRemoveDeFiConfig(${config.chainId})" style="background: #dc3545; color: white; border: none; padding: 6px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;">Remove</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    configList.innerHTML = configElements;
+  } catch (error) {
+    console.error('Failed to load DeFi configs:', error);
+  }
+}
+
+/**
+ * Handle save DeFi Interactor config
+ */
+async function handleSaveDeFiConfig() {
+  try {
+    const moduleAddress = (document.getElementById('defi-module-address') as HTMLInputElement).value.trim();
+    const enabled = (document.getElementById('defi-enabled-checkbox') as HTMLInputElement).checked;
+
+    // Validation
+    if (!moduleAddress || !moduleAddress.startsWith('0x') || moduleAddress.length !== 42) {
+      alert('Please enter a valid module contract address (0x...)');
+      return;
+    }
+
+    // Get chain ID from current network
+    const currentNetwork = await sendMessage<any>('GET_CURRENT_NETWORK');
+    if (!currentNetwork || !currentNetwork.chainId) {
+      alert('Could not determine current network. Please select a network first.');
+      return;
+    }
+
+    const chainId = currentNetwork.chainId;
+
+    const config = {
+      moduleAddress,
+      chainId,
+      enabled
+    };
+
+    await sendMessage('SET_DEFI_INTERACTOR_CONFIG', { config });
+
+    // Show success
+    const saveBtn = document.getElementById('save-defi-config-btn') as HTMLButtonElement;
+    const originalText = saveBtn.textContent;
+    saveBtn.textContent = '✓ Saved!';
+    saveBtn.style.background = '#28a745';
+
+    setTimeout(() => {
+      saveBtn.textContent = originalText || 'Add/Update Configuration';
+      saveBtn.style.background = '';
+    }, 2000);
+
+    // Clear inputs
+    (document.getElementById('defi-module-address') as HTMLInputElement).value = '';
+    (document.getElementById('defi-enabled-checkbox') as HTMLInputElement).checked = true;
+
+    // Reload configs
+    await loadDeFiConfigs();
+
+    console.log('DeFi config saved:', config);
+  } catch (error) {
+    alert('Failed to save: ' + (error as Error).message);
+  }
+}
+
+/**
+ * Handle remove DeFi Interactor config
+ */
+async function handleRemoveDeFiConfig(chainId: number) {
+  try {
+    const confirmed = confirm(`Remove DeFi Interactor Module configuration for chain ${chainId}?`);
+    if (!confirmed) return;
+
+    await sendMessage('REMOVE_DEFI_INTERACTOR_CONFIG', { chainId });
+    await loadDeFiConfigs();
+  } catch (error) {
+    alert('Failed to remove: ' + (error as Error).message);
+  }
+}
+
+// Make handleRemoveDeFiConfig globally accessible
+(window as any).handleRemoveDeFiConfig = handleRemoveDeFiConfig;
 
 // Initialize on load
 document.addEventListener('DOMContentLoaded', initialize);
