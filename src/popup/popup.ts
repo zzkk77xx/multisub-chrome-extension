@@ -175,7 +175,6 @@ function setupEventListeners() {
   });
 
   // Address spoofing controls
-  document.getElementById('spoof-enabled-checkbox')?.addEventListener('change', handleSpoofEnabledChange);
   document.getElementById('save-spoof-btn')?.addEventListener('click', handleSaveSpoofConfig);
 
   // DeFi Interactor Module controls
@@ -1055,42 +1054,14 @@ async function loadSpoofConfig() {
   try {
     const config = await sendMessage<{ enabled: boolean; spoofedAddress: string }>('GET_ADDRESS_SPOOF_CONFIG');
 
-    const enabledCheckbox = document.getElementById('spoof-enabled-checkbox') as HTMLInputElement;
     const addressInput = document.getElementById('spoof-address') as HTMLInputElement;
-    const addressGroup = document.getElementById('spoof-address-group');
-    const saveBtn = document.getElementById('save-spoof-btn');
-
-    if (enabledCheckbox) {
-      enabledCheckbox.checked = config.enabled;
-    }
 
     if (addressInput) {
       addressInput.value = config.spoofedAddress || '';
     }
-
-    // Always show address input and save button
-    addressGroup?.style.setProperty('display', 'block');
-    saveBtn?.style.setProperty('display', 'block');
   } catch (error) {
     console.error('Failed to load spoof config:', error);
   }
-}
-
-/**
- * Handle spoof enabled change
- */
-function handleSpoofEnabledChange() {
-  const enabledCheckbox = document.getElementById('spoof-enabled-checkbox') as HTMLInputElement;
-  const addressGroup = document.getElementById('spoof-address-group');
-  const saveBtn = document.getElementById('save-spoof-btn');
-
-  // if (enabledCheckbox.checked) {
-    addressGroup?.style.setProperty('display', 'block');
-    saveBtn?.style.setProperty('display', 'block');
-  // } else {
-  //   addressGroup?.style.setProperty('display', 'none');
-  //   saveBtn?.style.setProperty('display', 'block'); // Keep save button visible to save disabled state
-  // }
 }
 
 /**
@@ -1098,21 +1069,15 @@ function handleSpoofEnabledChange() {
  */
 async function handleSaveSpoofConfig() {
   try {
-    const enabledCheckbox = document.getElementById('spoof-enabled-checkbox') as HTMLInputElement;
     const addressInput = document.getElementById('spoof-address') as HTMLInputElement;
 
     const config = {
-      enabled: enabledCheckbox.checked,
+      enabled: !!addressInput.value.trim(),
       spoofedAddress: addressInput.value.trim()
     };
 
-    // Validate address if enabled
-    if (config.enabled && !config.spoofedAddress) {
-      alert('Please enter a spoofed address');
-      return;
-    }
-
-    if (config.enabled && !config.spoofedAddress.startsWith('0x')) {
+    // Validate address if provided
+    if (config.spoofedAddress && !config.spoofedAddress.startsWith('0x')) {
       alert('Address must start with 0x');
       return;
     }
