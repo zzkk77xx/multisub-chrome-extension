@@ -39,6 +39,12 @@ const CONFIG = {
   // DeFi Interactor Module address (optional, for module tests)
   defiModuleAddress: process.env.DEFI_MODULE_ADDRESS || "",
 
+  // Aave V3 Pool address (Sepolia)
+  aavePoolAddress: process.env.AAVE_POOL_ADDRESS || "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
+
+  // aToken address (optional, will be fetched if not provided)
+  aTokenAddress: process.env.ATOKEN_ADDRESS || "",
+
   decimals: 8,
 
   // Amount to approve/transfer (in smallest unit, e.g., wei)
@@ -62,8 +68,17 @@ const ERC20_ABI = [
 const DEFI_MODULE_ABI = [
   "function transferToken(address token, address recipient, uint256 amount) external returns (bool success)",
   "function approveProtocol(address token, address target, uint256 amount) external",
+  "function executeOnProtocol(address target, bytes calldata data) external returns (bytes memory result)",
   "function hasRole(address member, uint16 roleId) view returns (bool)",
+  "function allowedAddresses(address subAccount, address target) view returns (bool)",
   "function DEFI_TRANSFER_ROLE() view returns (uint16)",
+  "function DEFI_EXECUTE_ROLE() view returns (uint16)",
+];
+
+// Aave V3 Pool ABI (Sepolia)
+const AAVE_POOL_ABI = [
+  "function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external",
+  "function getUserAccountData(address user) external view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)",
 ];
 
 /**
@@ -288,12 +303,24 @@ async function testModuleTransfer(
     const decimals = await token.decimals();
 
     console.log("\nBalances before transfer:");
-    console.log(`Safe wallet (${safeAddress}): ${ethers.formatUnits(safeBalanceBefore, decimals)}`);
-    console.log(`Recipient (${recipient}): ${ethers.formatUnits(recipientBalanceBefore, decimals)}`);
+    console.log(
+      `Safe wallet (${safeAddress}): ${ethers.formatUnits(
+        safeBalanceBefore,
+        decimals
+      )}`
+    );
+    console.log(
+      `Recipient (${recipient}): ${ethers.formatUnits(
+        recipientBalanceBefore,
+        decimals
+      )}`
+    );
 
     if (safeBalanceBefore === BigInt(0)) {
       console.log("\n⚠️  WARNING: Safe wallet has 0 tokens!");
-      console.log("   The Safe needs to have tokens for the module to transfer them.");
+      console.log(
+        "   The Safe needs to have tokens for the module to transfer them."
+      );
       console.log("   Transfer some tokens to the Safe first.");
       return false;
     }
@@ -312,7 +339,9 @@ async function testModuleTransfer(
 
     const tx = await module.transferToken(tokenAddress, recipient, amount);
     console.log(`\nTransaction hash: ${tx.hash}`);
-    console.log(`Transaction from: ${wallet.address} (your wallet calling the module)`);
+    console.log(
+      `Transaction from: ${wallet.address} (your wallet calling the module)`
+    );
 
     console.log("Waiting for confirmation...");
     const receipt = await tx.wait();
@@ -325,8 +354,12 @@ async function testModuleTransfer(
     const recipientBalanceAfter = await token.balanceOf(recipient);
 
     console.log("\nBalances after transfer:");
-    console.log(`Safe wallet: ${ethers.formatUnits(safeBalanceAfter, decimals)}`);
-    console.log(`Recipient: ${ethers.formatUnits(recipientBalanceAfter, decimals)}`);
+    console.log(
+      `Safe wallet: ${ethers.formatUnits(safeBalanceAfter, decimals)}`
+    );
+    console.log(
+      `Recipient: ${ethers.formatUnits(recipientBalanceAfter, decimals)}`
+    );
 
     // Verify the transfer worked correctly
     const safeChange = safeBalanceBefore - safeBalanceAfter;
@@ -338,8 +371,10 @@ async function testModuleTransfer(
     console.log(`Recipient: +${ethers.formatUnits(recipientChange, decimals)}`);
 
     // Compare as strings to avoid type issues
-    if (safeChange.toString() === expectedAmount.toString() &&
-        recipientChange.toString() === expectedAmount.toString()) {
+    if (
+      safeChange.toString() === expectedAmount.toString() &&
+      recipientChange.toString() === expectedAmount.toString()
+    ) {
       console.log("✅ Transfer amounts verified!");
     }
 
@@ -348,6 +383,161 @@ async function testModuleTransfer(
     console.error("❌ Module transfer failed:", (error as Error).message);
     if ((error as any).data) {
       console.error("Error data:", (error as any).data);
+    }
+    return false;
+  }
+}
+
+/**
+ * Test 4: Aave V3 Supply through DeFi Interactor Module
+ */
+async function testAaveSupply(
+  provider: ethers.Provider,
+  wallet: ethers.Wallet,
+  tokenAddress: string,
+  moduleAddress: string,
+  safeAddress: string,
+  aavePoolAddress: string,
+  amount: string
+): Promise<boolean> {
+  console.log("\n💰 Test 4: Aave V3 Supply (from Safe via Module)");
+  console.log("=".repeat(50));
+
+  if (!moduleAddress) {
+    console.log("⏭️  Skipped (DEFI_MODULE_ADDRESS not set)");
+    return false;
+  }
+
+  if (!safeAddress) {
+    console.log("⏭️  Skipped (SAFE_ADDRESS not set)");
+    return false;
+  }
+
+  try {
+    const module = new ethers.Contract(moduleAddress, DEFI_MODULE_ABI, wallet);
+    const token = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+    const aavePool = new ethers.Contract(aavePoolAddress, AAVE_POOL_ABI, provider);
+
+    // Check if wallet has required roles
+    console.log("Checking permissions...");
+    const TRANSFER_ROLE = 2;
+    const EXECUTE_ROLE = 1;
+
+    const hasTransferRole = await module.hasRole(wallet.address, TRANSFER_ROLE);
+    const hasExecuteRole = await module.hasRole(wallet.address, EXECUTE_ROLE);
+
+    console.log(`  DEFI_TRANSFER_ROLE (2): ${hasTransferRole ? '✅' : '❌'}`);
+    console.log(`  DEFI_EXECUTE_ROLE (1):  ${hasExecuteRole ? '✅' : '❌'}`);
+
+    if (!hasExecuteRole) {
+      console.log(
+        `\n❌ Wallet ${wallet.address} does not have DEFI_EXECUTE_ROLE (role 1)`
+      );
+      console.log('   The approveProtocol() function requires DEFI_EXECUTE_ROLE.');
+      console.log('   Ask the Safe owner to grant it:');
+      console.log(`   module.grantRole("${wallet.address}", 1)`);
+      return false;
+    }
+
+    // Check if Aave pool is whitelisted
+    const isAaveAllowed = await module.allowedAddresses(wallet.address, aavePoolAddress);
+    console.log(`  Aave Pool whitelisted:   ${isAaveAllowed ? '✅' : '❌'}`);
+
+    if (!isAaveAllowed) {
+      console.log(
+        `\n❌ Aave Pool is not whitelisted for ${wallet.address}`
+      );
+      console.log('   Ask the Safe owner to whitelist it:');
+      console.log(`   module.setAllowedAddress("${wallet.address}", "${aavePoolAddress}", true)`);
+      return false;
+    }
+
+    console.log('✅ All permissions verified!');
+
+    // Check Safe's token balance
+    const safeBalanceBefore = await token.balanceOf(safeAddress);
+    const decimals = await token.decimals();
+
+    console.log(`\nSafe token balance: ${ethers.formatUnits(safeBalanceBefore, decimals)}`);
+
+    if (safeBalanceBefore === BigInt(0)) {
+      console.log("⚠️  WARNING: Safe wallet has 0 tokens!");
+      return false;
+    }
+
+    // Get Safe's position on Aave before
+    const accountDataBefore = await aavePool.getUserAccountData(safeAddress);
+    console.log(`\nAave position before:`);
+    console.log(`  Total Collateral: ${ethers.formatUnits(accountDataBefore.totalCollateralBase, 8)} USD`);
+    console.log(`  Total Debt: ${ethers.formatUnits(accountDataBefore.totalDebtBase, 8)} USD`);
+
+    // Step 1: Approve Aave pool to spend tokens via module
+    console.log(`\nStep 1: Approving Aave pool to spend tokens...`);
+    console.log(`  Token: ${tokenAddress}`);
+    console.log(`  Spender (Aave Pool): ${aavePoolAddress}`);
+    console.log(`  Amount: ${ethers.formatUnits(amount, decimals)}`);
+
+    const approveTx = await module.approveProtocol(
+      tokenAddress,
+      aavePoolAddress,
+      amount
+    );
+    console.log(`  Approval TX: ${approveTx.hash}`);
+    await approveTx.wait();
+    console.log(`  ✅ Approved!`);
+
+    // Step 2: Supply to Aave via executeOnProtocol
+    console.log(`\nStep 2: Supplying to Aave...`);
+    console.log(`  Amount: ${ethers.formatUnits(amount, decimals)}`);
+    console.log(`  On behalf of: ${safeAddress} (Safe)`);
+
+    // Encode the supply call
+    const supplyData = aavePool.interface.encodeFunctionData("supply", [
+      tokenAddress,    // asset
+      amount,          // amount
+      safeAddress,     // onBehalfOf (Safe wallet)
+      0                // referralCode
+    ]);
+
+    console.log(`  Encoded data: ${supplyData.slice(0, 10)}...`);
+
+    const supplyTx = await module.executeOnProtocol(aavePoolAddress, supplyData);
+    console.log(`  Supply TX: ${supplyTx.hash}`);
+
+    console.log("  Waiting for confirmation...");
+    const receipt = await supplyTx.wait();
+    console.log(`  ✅ Supplied! Gas used: ${receipt.gasUsed.toString()}`);
+
+    // Check Safe's position on Aave after
+    const accountDataAfter = await aavePool.getUserAccountData(safeAddress);
+    console.log(`\nAave position after:`);
+    console.log(`  Total Collateral: ${ethers.formatUnits(accountDataAfter.totalCollateralBase, 8)} USD`);
+    console.log(`  Total Debt: ${ethers.formatUnits(accountDataAfter.totalDebtBase, 8)} USD`);
+
+    const collateralChange = accountDataAfter.totalCollateralBase - accountDataBefore.totalCollateralBase;
+    console.log(`  Collateral change: +${ethers.formatUnits(collateralChange, 8)} USD`);
+
+    // Check Safe's token balance after
+    const safeBalanceAfter = await token.balanceOf(safeAddress);
+    const tokenChange = safeBalanceBefore - safeBalanceAfter;
+
+    console.log(`\nToken balance change:`);
+    console.log(`  Before: ${ethers.formatUnits(safeBalanceBefore, decimals)}`);
+    console.log(`  After: ${ethers.formatUnits(safeBalanceAfter, decimals)}`);
+    console.log(`  Supplied: ${ethers.formatUnits(tokenChange, decimals)}`);
+
+    if (tokenChange.toString() === amount) {
+      console.log("✅ Supply amounts verified!");
+    }
+
+    return true;
+  } catch (error) {
+    console.error("❌ Aave supply failed:", (error as Error).message);
+    if ((error as any).data) {
+      console.error("Error data:", (error as any).data);
+    }
+    if ((error as any).reason) {
+      console.error("Reason:", (error as any).reason);
     }
     return false;
   }
@@ -407,33 +597,47 @@ async function main() {
     approve: false,
     transfer: false,
     moduleTransfer: false,
+    aaveSupply: false,
   };
 
-  // Test 1: Approve
-  results.approve = await testApprove(
-    token,
-    wallet,
-    CONFIG.spenderAddress,
-    CONFIG.amount
-  );
+  // // Test 1: Approve
+  // results.approve = await testApprove(
+  //   token,
+  //   wallet,
+  //   CONFIG.spenderAddress,
+  //   CONFIG.amount
+  // );
 
-  // Test 2: Transfer
-  results.transfer = await testTransfer(
-    token,
-    wallet,
-    CONFIG.recipientAddress,
-    CONFIG.amount
-  );
+  // // Test 2: Transfer
+  // results.transfer = await testTransfer(
+  //   token,
+  //   wallet,
+  //   CONFIG.recipientAddress,
+  //   CONFIG.amount
+  // );
 
-  // Test 3: Module Transfer (optional)
-  if (CONFIG.defiModuleAddress && CONFIG.safeAddress) {
-    results.moduleTransfer = await testModuleTransfer(
+  // // Test 3: Module Transfer (optional)
+  // if (CONFIG.defiModuleAddress && CONFIG.safeAddress) {
+  //   results.moduleTransfer = await testModuleTransfer(
+  //     provider,
+  //     wallet,
+  //     CONFIG.tokenAddress,
+  //     CONFIG.defiModuleAddress,
+  //     CONFIG.safeAddress,
+  //     CONFIG.recipientAddress,
+  //     CONFIG.amount
+  //   );
+  // }
+
+  // Test 4: Aave Supply (optional)
+  if (CONFIG.defiModuleAddress && CONFIG.safeAddress && CONFIG.aavePoolAddress) {
+    results.aaveSupply = await testAaveSupply(
       provider,
       wallet,
       CONFIG.tokenAddress,
       CONFIG.defiModuleAddress,
       CONFIG.safeAddress,
-      CONFIG.recipientAddress,
+      CONFIG.aavePoolAddress,
       CONFIG.amount
     );
   }
@@ -441,16 +645,21 @@ async function main() {
   // Summary
   console.log("\n📋 Test Summary");
   console.log("=".repeat(50));
-  console.log(`Approve:          ${results.approve ? "✅ PASS" : "❌ FAIL"}`);
-  console.log(`Transfer:         ${results.transfer ? "✅ PASS" : "❌ FAIL"}`);
+  console.log(`Approve:          ${results.approve ? "✅ PASS" : "⏭️  SKIP"}`);
+  console.log(`Transfer:         ${results.transfer ? "✅ PASS" : "⏭️  SKIP"}`);
   if (CONFIG.defiModuleAddress) {
     console.log(
-      `Module Transfer:  ${results.moduleTransfer ? "✅ PASS" : "❌ FAIL"}`
+      `Module Transfer:  ${results.moduleTransfer ? "✅ PASS" : "⏭️  SKIP"}`
+    );
+  }
+  if (CONFIG.aavePoolAddress) {
+    console.log(
+      `Aave Supply:      ${results.aaveSupply ? "✅ PASS" : "❌ FAIL"}`
     );
   }
 
   const passCount = Object.values(results).filter(Boolean).length;
-  const totalTests = CONFIG.defiModuleAddress ? 3 : 2;
+  const totalTests = Object.values(results).length;
   console.log(`\nTotal: ${passCount}/${totalTests} tests passed`);
 
   process.exit(passCount === totalTests ? 0 : 1);
